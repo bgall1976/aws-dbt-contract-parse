@@ -1,0 +1,33 @@
+version: 2
+
+seeds:
+  - name: ref_payers
+    description: "Reference table of insurance payers"
+    columns:
+      - name: payer_id
+        description: "Unique payer identifier"
+        tests:
+          - unique
+          - not_null
+      - name: payer_name
+        description: "Payer company name"
+        tests:
+          - not_null
+      - name: payer_type
+        description: "Type of payer (COMMERCIAL, GOVERNMENT, HMO)"
+        tests:
+          - accepted_values:
+              values: ['COMMERCIAL', 'GOVERNMENT', 'HMO', 'PPO', 'EPO']
+
+  - name: ref_service_categories
+    description: "Reference table of healthcare service categories"
+    columns:
+      - name: category_code
+        description: "Category code identifier"
+        tests:
+          - unique
+          - not_null
+      - name: category_name
+        description: "Human-readable category name"
+        tests:
+          - not_null

@@ -1,0 +1,70 @@
+name: 'contract_pipeline'
+version: '1.0.0'
+config-version: 2
+
+profile: 'contract_pipeline'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # S3 paths for external tables
+  s3_processed_bucket: "{{ env_var('S3_PROCESSED_BUCKET', 'contracts-processed') }}"
+  
+  # Date range for processing
+  start_date: '2022-01-01'
+  end_date: '2026-12-31'
+
+models:
+  contract_pipeline:
+    +materialized: view
+    
+    staging:
+      +materialized: view
+      +schema: staging
+      +tags: ['staging']
+      
+    intermediate:
+      +materialized: ephemeral
+      +tags: ['intermediate']
+      
+    marts:
+      core:
+        +materialized: table
+        +schema: marts
+        +tags: ['core', 'marts']
+        
+      analytics:
+        +materialized: table
+        +schema: analytics
+        +tags: ['analytics']
+
+seeds:
+  contract_pipeline:
+    +schema: reference
+    ref_payers:
+      +column_types:
+        payer_id: varchar(50)
+        payer_name: varchar(200)
+        payer_type: varchar(50)
+    ref_service_categories:
+      +column_types:
+        category_code: varchar(20)
+        category_name: varchar(100)
+        description: varchar(500)
+
+snapshots:
+  contract_pipeline:
+    +target_schema: snapshots
+
+tests:
+  contract_pipeline:
+    +severity: warn

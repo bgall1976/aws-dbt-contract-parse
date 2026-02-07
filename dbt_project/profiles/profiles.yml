@@ -1,0 +1,39 @@
+# Redshift Profile for Contract Pipeline
+# Copy this file to ~/.dbt/profiles.yml and update with your credentials
+# Best practice: Use environment variables for sensitive values
+
+contract_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST') }}"
+      port: "{{ env_var('REDSHIFT_PORT', '5439') | int }}"
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      dbname: "{{ env_var('REDSHIFT_DATABASE', 'contracts_dw') }}"
+      schema: dev
+      threads: 4
+      connect_timeout: 30
+      
+    prod:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST') }}"
+      port: "{{ env_var('REDSHIFT_PORT', '5439') | int }}"
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      dbname: "{{ env_var('REDSHIFT_DATABASE', 'contracts_dw') }}"
+      schema: prod
+      threads: 8
+      connect_timeout: 30
+      
+    ci:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST') }}"
+      port: "{{ env_var('REDSHIFT_PORT', '5439') | int }}"
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      dbname: contracts_dw_ci
+      schema: ci
+      threads: 4
+      connect_timeout: 30

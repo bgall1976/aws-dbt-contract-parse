@@ -1,0 +1,112 @@
+version: 2
+
+models:
+  - name: dim_contract
+    description: "Contract dimension with SCD Type 2 history tracking"
+    columns:
+      - name: contract_key
+        description: "Surrogate key for dimension"
+        tests:
+          - unique
+          - not_null
+      - name: contract_id
+        description: "Natural business key"
+        tests:
+          - not_null
+      - name: is_current
+        description: "Flag indicating current version of contract"
+        tests:
+          - not_null
+
+  - name: dim_provider
+    description: "Provider dimension - healthcare providers with contracts"
+    columns:
+      - name: provider_key
+        description: "Surrogate key"
+        tests:
+          - unique
+          - not_null
+      - name: provider_npi
+        description: "National Provider Identifier (10 digits)"
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_payer
+    description: "Payer dimension - insurance companies and payers"
+    columns:
+      - name: payer_key
+        description: "Surrogate key"
+        tests:
+          - unique
+          - not_null
+      - name: payer_id
+        description: "Payer identifier"
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_service
+    description: "Service/Procedure dimension - CPT codes and service categories"
+    columns:
+      - name: service_key
+        description: "Surrogate key"
+        tests:
+          - unique
+          - not_null
+      - name: cpt_code
+        description: "CPT/HCPCS procedure code"
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    description: "Standard date dimension"
+    columns:
+      - name: date_key
+        description: "Integer key in YYYYMMDD format"
+        tests:
+          - unique
+          - not_null
+      - name: full_date
+        description: "Full date value"
+        tests:
+          - unique
+          - not_null
+
+  - name: fact_contracted_rates
+    description: "Fact table of contracted rates per provider, payer, and service"
+    columns:
+      - name: rate_key
+        description: "Surrogate key for fact row"
+        tests:
+          - unique
+          - not_null
+      - name: contract_key
+        description: "FK to dim_contract"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_contract')
+              field: contract_key
+      - name: provider_key
+        description: "FK to dim_provider"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_provider')
+              field: provider_key
+      - name: payer_key
+        description: "FK to dim_payer"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_payer')
+              field: payer_key
+      - name: rate_amount
+        description: "Contracted rate amount"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false

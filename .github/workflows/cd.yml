@@ -1,0 +1,184 @@
+name: CD - Production Deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dbt_project/**'
+      - 'extraction/**'
+      - '.github/workflows/cd.yml'
+
+env:
+  REDSHIFT_HOST: ${{ secrets.REDSHIFT_HOST }}
+  REDSHIFT_PORT: ${{ secrets.REDSHIFT_PORT }}
+  REDSHIFT_USER: ${{ secrets.REDSHIFT_USER }}
+  REDSHIFT_PASSWORD: ${{ secrets.REDSHIFT_PASSWORD }}
+  REDSHIFT_DATABASE: contracts_dw
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ECR_REPOSITORY: contract-extractor
+
+jobs:
+  # ==========================================
+  # Deploy dbt Models to Production
+  # ==========================================
+  deploy-dbt:
+    name: Deploy dbt Models
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt_project
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-redshift
+      
+      - name: Create dbt profiles.yml
+        run: |
+          mkdir -p ~/.dbt
+          cat <<EOF > ~/.dbt/profiles.yml
+          contract_pipeline:
+            target: prod
+            outputs:
+              prod:
+                type: redshift
+                host: ${{ secrets.REDSHIFT_HOST }}
+                port: ${{ secrets.REDSHIFT_PORT }}
+                user: ${{ secrets.REDSHIFT_USER }}
+                password: ${{ secrets.REDSHIFT_PASSWORD }}
+                dbname: contracts_dw
+                schema: prod
+                threads: 8
+          EOF
+      
+      - name: Install dbt packages
+        run: dbt deps
+      
+      - name: Run dbt seed (reference data)
+        run: dbt seed --target prod
+      
+      - name: Run dbt models
+        run: dbt run --target prod
+      
+      - name: Run dbt snapshots (SCD Type 2)
+        run: dbt snapshot --target prod
+      
+      - name: Run dbt tests
+        run: dbt test --target prod
+      
+      - name: Generate documentation
+        run: dbt docs generate --target prod
+      
+      - name: Upload dbt artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-prod-artifacts
+          path: |
+            dbt_project/target/manifest.json
+            dbt_project/target/run_results.json
+      
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "❌ dbt deployment failed for ${{ github.repository }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*dbt Deployment Failed*\nRepository: ${{ github.repository }}\nCommit: ${{ github.sha }}\nWorkflow: ${{ github.workflow }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  # ==========================================
+  # Build and Deploy Extraction Container
+  # ==========================================
+  deploy-extraction:
+    name: Deploy Extraction Service
+    runs-on: ubuntu-latest
+    needs: deploy-dbt
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Build, tag, and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cd extraction
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster contract-pipeline-cluster \
+            --service contract-extractor-service \
+            --force-new-deployment
+      
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster contract-pipeline-cluster \
+            --services contract-extractor-service
+
+  # ==========================================
+  # Trigger Pipeline Run
+  # ==========================================
+  trigger-pipeline:
+    name: Trigger Extraction Pipeline
+    runs-on: ubuntu-latest
+    needs: [deploy-dbt, deploy-extraction]
+    if: ${{ github.event_name == 'push' }}
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Trigger extraction Lambda
+        run: |
+          aws lambda invoke \
+            --function-name trigger-contract-extraction \
+            --payload '{"source": "github-actions", "commit": "${{ github.sha }}"}' \
+            response.json
+          cat response.json

@@ -1,0 +1,35 @@
+# dbt and warehouse adapters
+dbt-core>=1.7.0,<2.0.0
+dbt-redshift>=1.7.0,<2.0.0
+
+# AWS SDK
+boto3>=1.34.0
+botocore>=1.34.0
+
+# PDF Processing
+docling>=1.0.0
+pypdf>=4.0.0
+pdfplumber>=0.10.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# JSON Schema validation
+jsonschema>=4.19.0
+pydantic>=2.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+moto>=5.0.0  # AWS mocking for tests
+
+# Utilities
+python-dotenv>=1.0.0
+click>=8.1.0
+tqdm>=4.66.0
+
+# Code quality
+sqlfluff>=3.0.0
+black>=24.0.0
+ruff>=0.1.0

@@ -1,0 +1,155 @@
+name: CI - Pull Request Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dbt_project/**'
+      - 'extraction/**'
+      - '.github/workflows/ci.yml'
+
+env:
+  REDSHIFT_HOST: ${{ secrets.REDSHIFT_HOST }}
+  REDSHIFT_PORT: ${{ secrets.REDSHIFT_PORT }}
+  REDSHIFT_USER: ${{ secrets.REDSHIFT_USER }}
+  REDSHIFT_PASSWORD: ${{ secrets.REDSHIFT_PASSWORD }}
+  REDSHIFT_DATABASE: contracts_dw_ci
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+
+jobs:
+  # ==========================================
+  # dbt Validation
+  # ==========================================
+  dbt-validation:
+    name: dbt Compile & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt_project
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-redshift sqlfluff
+      
+      - name: Create dbt profiles.yml
+        run: |
+          mkdir -p ~/.dbt
+          cat <<EOF > ~/.dbt/profiles.yml
+          contract_pipeline:
+            target: ci
+            outputs:
+              ci:
+                type: redshift
+                host: ${{ secrets.REDSHIFT_HOST }}
+                port: ${{ secrets.REDSHIFT_PORT }}
+                user: ${{ secrets.REDSHIFT_USER }}
+                password: ${{ secrets.REDSHIFT_PASSWORD }}
+                dbname: contracts_dw_ci
+                schema: ci_${{ github.event.pull_request.number }}
+                threads: 4
+          EOF
+      
+      - name: Install dbt packages
+        run: dbt deps
+      
+      - name: Lint SQL with SQLFluff
+        run: |
+          sqlfluff lint models/ --dialect redshift || true
+        continue-on-error: true
+      
+      - name: dbt compile
+        run: dbt compile --target ci
+      
+      - name: dbt run (CI schema)
+        run: dbt run --target ci --full-refresh
+      
+      - name: dbt test
+        run: dbt test --target ci
+      
+      - name: Generate documentation
+        run: dbt docs generate --target ci
+      
+      - name: Upload dbt artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-artifacts
+          path: |
+            dbt_project/target/manifest.json
+            dbt_project/target/run_results.json
+            dbt_project/target/catalog.json
+
+  # ==========================================
+  # Extraction Service Tests
+  # ==========================================
+  extraction-tests:
+    name: Extraction Service Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extraction
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils tesseract-ocr
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml
+      
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v3
+        with:
+          files: extraction/coverage.xml
+          fail_ci_if_error: false
+
+  # ==========================================
+  # Docker Build Test
+  # ==========================================
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./extraction
+          push: false
+          tags: contract-extractor:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

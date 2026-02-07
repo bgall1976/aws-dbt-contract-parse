@@ -1,0 +1,11 @@
+payer_id,payer_name,payer_type,payer_state,payer_website
+BCBS-001,Blue Cross Blue Shield,COMMERCIAL,Multi-State,https://www.bcbs.com
+AETNA-001,Aetna,COMMERCIAL,Multi-State,https://www.aetna.com
+UHC-001,UnitedHealthcare,COMMERCIAL,Multi-State,https://www.uhc.com
+CIGNA-001,Cigna,COMMERCIAL,Multi-State,https://www.cigna.com
+HUMANA-001,Humana,COMMERCIAL,Multi-State,https://www.humana.com
+ANTHEM-001,Anthem,COMMERCIAL,Multi-State,https://www.anthem.com
+KAISER-001,Kaiser Permanente,HMO,CA,https://www.kaiserpermanente.org
+MEDICARE-001,Medicare,GOVERNMENT,Federal,https://www.medicare.gov
+MEDICAID-001,Medicaid,GOVERNMENT,Multi-State,https://www.medicaid.gov
+TRICARE-001,TRICARE,GOVERNMENT,Federal,https://www.tricare.mil

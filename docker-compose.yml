@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # Extraction Service
+  # ==========================================
+  extractor:
+    build:
+      context: ./extraction
+      dockerfile: Dockerfile
+    container_name: contract-extractor
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_RAW_BUCKET=${S3_RAW_BUCKET:-contracts-raw-local}
+      - S3_PROCESSED_BUCKET=${S3_PROCESSED_BUCKET:-contracts-processed-local}
+    volumes:
+      - ./extraction/src:/app/src:ro
+      - ./sample_contracts:/app/sample_contracts:ro
+    depends_on:
+      - localstack
+    networks:
+      - contract-network
+
+  # ==========================================
+  # LocalStack (AWS Services Mock)
+  # ==========================================
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3,sqs,lambda
+      - DEBUG=1
+      - DATA_DIR=/var/lib/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./infrastructure/localstack:/etc/localstack/init/ready.d
+    networks:
+      - contract-network
+
+  # ==========================================
+  # Redshift Serverless (Mock with PostgreSQL)
+  # ==========================================
+  postgres:
+    image: postgres:15
+    container_name: redshift-mock
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password123
+      - POSTGRES_DB=contracts_dw
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - contract-network
+
+  # ==========================================
+  # dbt Runner
+  # ==========================================
+  dbt:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbt
+    container_name: dbt-runner
+    environment:
+      - REDSHIFT_HOST=postgres
+      - REDSHIFT_PORT=5432
+      - REDSHIFT_USER=admin
+      - REDSHIFT_PASSWORD=password123
+      - REDSHIFT_DATABASE=contracts_dw
+    volumes:
+      - ./dbt_project:/app/dbt_project
+    working_dir: /app/dbt_project
+    depends_on:
+      - postgres
+    networks:
+      - contract-network
+    command: ["dbt", "debug"]
+
+volumes:
+  localstack_data:
+  postgres_data:
+
+networks:
+  contract-network:
+    driver: bridge

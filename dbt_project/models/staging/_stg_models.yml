@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: stg_contracts
+    description: "Staged contract header data cleaned and type-cast from extracted JSON"
+    columns:
+      - name: contract_id
+        description: "Unique contract identifier"
+        tests:
+          - unique
+          - not_null
+      - name: payer_id
+        description: "Payer identifier code"
+        tests:
+          - not_null
+      - name: provider_npi
+        description: "National Provider Identifier (10 digits)"
+        tests:
+          - not_null
+      - name: effective_date
+        description: "Contract effective date"
+        tests:
+          - not_null
+      - name: termination_date
+        description: "Contract termination date"
+        tests:
+          - not_null
+      - name: contract_status
+        description: "Current status: ACTIVE, EXPIRED, or FUTURE"
+        tests:
+          - accepted_values:
+              values: ['ACTIVE', 'EXPIRED', 'FUTURE']
+      - name: extraction_confidence
+        description: "Docling confidence score (0-1)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              inclusive: true
+
+  - name: stg_rate_schedules
+    description: "Flattened rate schedule data from contracts"
+    columns:
+      - name: rate_schedule_id
+        description: "Surrogate key for rate line"
+        tests:
+          - unique
+          - not_null
+      - name: contract_id
+        description: "Parent contract identifier"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_contracts')
+              field: contract_id
+      - name: rate_amount
+        description: "Contracted rate amount"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: rate_type
+        description: "Type of rate structure"
+        tests:
+          - accepted_values:
+              values: ['PER_DIEM', 'PERCENTAGE', 'FLAT_FEE', 'FEE_SCHEDULE', 'CASE_RATE']
+
+  - name: stg_amendments
+    description: "Contract amendments and modifications"
+    columns:
+      - name: amendment_key
+        description: "Surrogate key for amendment"
+        tests:
+          - unique
+          - not_null
+      - name: contract_id
+        description: "Parent contract identifier"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_contracts')
+              field: contract_id
+      - name: amendment_type
+        description: "Type of amendment"
+        tests:
+          - accepted_values:
+              values: ['MODIFICATION', 'RATE_CHANGE', 'TERMINATION', 'EXTENSION', 'ADDENDUM']

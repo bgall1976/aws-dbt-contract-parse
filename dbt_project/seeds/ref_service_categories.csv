@@ -1,0 +1,17 @@
+category_code,category_name,description
+INPATIENT,Inpatient Services,Hospital inpatient stays and procedures
+OUTPATIENT,Outpatient Services,Hospital outpatient and ambulatory services
+EMERGENCY,Emergency Services,Emergency room and urgent care services
+PRIMARY,Primary Care,Office visits and primary care services
+SPECIALIST,Specialist Services,Specialist consultations and procedures
+SURGERY,Surgical Services,Surgical procedures inpatient and outpatient
+IMAGING,Imaging Services,X-ray MRI CT scan and other imaging
+LAB,Laboratory Services,Blood work pathology and lab tests
+PHARMACY,Pharmacy Services,Prescription medications and pharmacy
+DME,Durable Medical Equipment,Medical equipment and supplies
+MENTAL,Mental Health Services,Psychiatric and psychological services
+REHAB,Rehabilitation Services,Physical occupational and speech therapy
+HOME,Home Health Services,Home health care and hospice
+PREVENTIVE,Preventive Care,Wellness visits and preventive screenings
+MATERNITY,Maternity Services,Prenatal delivery and postnatal care
+PEDIATRIC,Pediatric Services,Services for children and adolescents
