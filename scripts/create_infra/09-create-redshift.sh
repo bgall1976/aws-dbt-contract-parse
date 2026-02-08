@@ -3,11 +3,9 @@
 # Step 9: Create Redshift Serverless
 # ==========================================
 
-# ==========================================
-# Configuration - Set these variables
-# ==========================================
+# Inline configuration
+AWS_REGION="${AWS_REGION:-us-east-2}"
 PROJECT_NAME="${PROJECT_NAME:-contract-pipeline}"
-AWS_REGION="${AWS_REGION:-us-east-1}"
 ENVIRONMENT="${ENVIRONMENT:-dev}"
 REDSHIFT_ADMIN_USER="${REDSHIFT_ADMIN_USER:-admin}"
 REDSHIFT_ADMIN_PASSWORD="${REDSHIFT_ADMIN_PASSWORD:-}"
@@ -16,7 +14,7 @@ REDSHIFT_DATABASE="${REDSHIFT_DATABASE:-contracts_dw}"
 # Derived names
 REDSHIFT_NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
 REDSHIFT_WORKGROUP="${PROJECT_NAME}-workgroup-${ENVIRONMENT}"
-REDSHIFT_SG_NAME="${PROJECT_NAME}-redshift-sg"
+SECURITY_GROUP_NAME="${PROJECT_NAME}-redshift-sg"
 
 # Colors
 RED='\033[0;31m'
@@ -26,8 +24,9 @@ NC='\033[0m'
 
 echo -e "${YELLOW}Step 9: Creating Redshift Serverless...${NC}"
 echo ""
-echo "  Namespace:  $REDSHIFT_NAMESPACE"
-echo "  Workgroup:  $REDSHIFT_WORKGROUP"
+echo "  Region: $AWS_REGION"
+echo "  Namespace: $REDSHIFT_NAMESPACE"
+echo "  Workgroup: $REDSHIFT_WORKGROUP"
 echo ""
 
 # ==========================================
@@ -53,26 +52,72 @@ echo -e "${YELLOW}WARNING: This step can take 5-10 minutes to complete.${NC}"
 echo ""
 
 # ==========================================
+# Create Security Group
+# ==========================================
+echo "Creating/finding security group..."
+
+DEFAULT_VPC_ID=$(aws ec2 describe-vpcs \
+    --filters "Name=isDefault,Values=true" \
+    --query 'Vpcs[0].VpcId' \
+    --region "$AWS_REGION" \
+    --output text)
+
+echo "  VPC: $DEFAULT_VPC_ID"
+
+SECURITY_GROUP_ID=$(aws ec2 describe-security-groups \
+    --filters "Name=group-name,Values=${SECURITY_GROUP_NAME}" "Name=vpc-id,Values=${DEFAULT_VPC_ID}" \
+    --query 'SecurityGroups[0].GroupId' \
+    --region "$AWS_REGION" \
+    --output text 2>/dev/null)
+
+if [ -z "$SECURITY_GROUP_ID" ] || [ "$SECURITY_GROUP_ID" == "None" ]; then
+    SECURITY_GROUP_ID=$(aws ec2 create-security-group \
+        --group-name "${SECURITY_GROUP_NAME}" \
+        --description "Security group for Redshift Serverless" \
+        --vpc-id "$DEFAULT_VPC_ID" \
+        --region "$AWS_REGION" \
+        --query 'GroupId' \
+        --output text 2>/dev/null)
+    echo -e "  ${GREEN}[OK] Created security group: $SECURITY_GROUP_ID${NC}"
+    
+    # Allow inbound on port 5439
+    aws ec2 authorize-security-group-ingress \
+        --group-id "$SECURITY_GROUP_ID" \
+        --protocol tcp \
+        --port 5439 \
+        --cidr "0.0.0.0/0" \
+        --region "$AWS_REGION" > /dev/null 2>&1
+    echo "  Added ingress rule for port 5439"
+else
+    echo -e "  ${GREEN}[OK] Security group exists: $SECURITY_GROUP_ID${NC}"
+fi
+
+# ==========================================
 # Create Namespace
 # ==========================================
+echo ""
 echo "Checking if namespace exists..."
-NAMESPACE_EXISTS=$(aws redshift-serverless list-namespaces \
-    --query "namespaces[?namespaceName=='${REDSHIFT_NAMESPACE}'].namespaceName" \
-    --output text 2>/dev/null || echo "")
+NAMESPACE_EXISTS=$(aws redshift-serverless get-namespace \
+    --namespace-name "${REDSHIFT_NAMESPACE}" \
+    --region "$AWS_REGION" \
+    --query "namespace.namespaceName" \
+    --output text 2>/dev/null)
 
-if [ -n "$NAMESPACE_EXISTS" ]; then
-    echo "  Redshift namespace $REDSHIFT_NAMESPACE already exists, skipping..."
+if [ -n "$NAMESPACE_EXISTS" ] && [ "$NAMESPACE_EXISTS" != "None" ]; then
+    echo -e "  ${GREEN}[OK] Namespace already exists${NC}"
 else
-    echo "  Creating Redshift Serverless namespace: $REDSHIFT_NAMESPACE"
+    echo "  Creating namespace: $REDSHIFT_NAMESPACE"
     
-    if aws redshift-serverless create-namespace \
+    aws redshift-serverless create-namespace \
         --namespace-name "$REDSHIFT_NAMESPACE" \
         --admin-username "$REDSHIFT_ADMIN_USER" \
         --admin-user-password "$REDSHIFT_ADMIN_PASSWORD" \
         --db-name "$REDSHIFT_DATABASE" \
-        --tags key=Project,value="$PROJECT_NAME" key=Environment,value="$ENVIRONMENT" \
-        --output text > /dev/null 2>&1; then
-        echo -e "  ${GREEN}[OK] Created Redshift namespace${NC}"
+        --region "$AWS_REGION" \
+        --output text > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo -e "  ${GREEN}[OK] Created namespace${NC}"
     else
         echo -e "  ${RED}[FAILED] Failed to create namespace${NC}"
     fi
@@ -82,7 +127,9 @@ else
     for i in {1..30}; do
         STATUS=$(aws redshift-serverless get-namespace \
             --namespace-name "$REDSHIFT_NAMESPACE" \
-            --query "namespace.status" --output text 2>/dev/null || echo "NOTFOUND")
+            --region "$AWS_REGION" \
+            --query "namespace.status" \
+            --output text 2>/dev/null || echo "NOTFOUND")
         if [ "$STATUS" = "AVAILABLE" ]; then
             echo -e "  ${GREEN}[OK] Namespace is available${NC}"
             break
@@ -97,68 +144,43 @@ fi
 # ==========================================
 echo ""
 echo "Checking if workgroup exists..."
-WORKGROUP_EXISTS=$(aws redshift-serverless list-workgroups \
-    --query "workgroups[?workgroupName=='${REDSHIFT_WORKGROUP}'].workgroupName" \
-    --output text 2>/dev/null || echo "")
+WORKGROUP_EXISTS=$(aws redshift-serverless get-workgroup \
+    --workgroup-name "${REDSHIFT_WORKGROUP}" \
+    --region "$AWS_REGION" \
+    --query "workgroup.workgroupName" \
+    --output text 2>/dev/null)
 
-if [ -n "$WORKGROUP_EXISTS" ]; then
-    echo "  Redshift workgroup $REDSHIFT_WORKGROUP already exists, skipping..."
+if [ -n "$WORKGROUP_EXISTS" ] && [ "$WORKGROUP_EXISTS" != "None" ]; then
+    echo -e "  ${GREEN}[OK] Workgroup already exists${NC}"
 else
-    echo "  Creating Redshift Serverless workgroup: $REDSHIFT_WORKGROUP"
+    echo "  Creating workgroup: $REDSHIFT_WORKGROUP"
     
-    # Get default VPC and subnets
-    DEFAULT_VPC_ID=$(aws ec2 describe-vpcs \
-        --filters "Name=isDefault,Values=true" \
-        --query 'Vpcs[0].VpcId' --output text)
-    
-    echo "  Using VPC: $DEFAULT_VPC_ID"
-    
+    # Get subnets
     SUBNET_IDS=$(aws ec2 describe-subnets \
         --filters "Name=vpc-id,Values=$DEFAULT_VPC_ID" \
-        --query 'Subnets[*].SubnetId' --output text)
+        --query 'Subnets[*].SubnetId' \
+        --region "$AWS_REGION" \
+        --output text)
     
     echo "  Subnets: $SUBNET_IDS"
     
-    # Create or find security group for Redshift
-    echo "  Creating/finding security group..."
-    REDSHIFT_SG_ID=$(aws ec2 create-security-group \
-        --group-name "${REDSHIFT_SG_NAME}" \
-        --description "Security group for Redshift Serverless" \
-        --vpc-id "$DEFAULT_VPC_ID" \
-        --query 'GroupId' --output text 2>/dev/null)
-    
-    if [ -z "$REDSHIFT_SG_ID" ] || [ "$REDSHIFT_SG_ID" = "None" ]; then
-        REDSHIFT_SG_ID=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=${REDSHIFT_SG_NAME}" \
-            --query 'SecurityGroups[0].GroupId' --output text)
-    fi
-    
-    echo "  Security Group: $REDSHIFT_SG_ID"
-    
-    # Allow inbound on port 5439
-    aws ec2 authorize-security-group-ingress \
-        --group-id "$REDSHIFT_SG_ID" \
-        --protocol tcp \
-        --port 5439 \
-        --cidr "0.0.0.0/0" > /dev/null 2>&1 || echo "  (Ingress rule already exists)"
-    
-    # Create workgroup
-    echo "  Creating workgroup..."
-    if aws redshift-serverless create-workgroup \
+    aws redshift-serverless create-workgroup \
         --workgroup-name "$REDSHIFT_WORKGROUP" \
         --namespace-name "$REDSHIFT_NAMESPACE" \
         --base-capacity 8 \
-        --security-group-ids "$REDSHIFT_SG_ID" \
+        --security-group-ids "$SECURITY_GROUP_ID" \
         --subnet-ids $SUBNET_IDS \
         --publicly-accessible \
-        --tags key=Project,value="$PROJECT_NAME" key=Environment,value="$ENVIRONMENT" \
-        --output text > /dev/null 2>&1; then
+        --region "$AWS_REGION" \
+        --output text > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
         echo -e "  ${GREEN}[OK] Workgroup creation started${NC}"
     else
         echo -e "  ${RED}[FAILED] Failed to create workgroup${NC}"
     fi
     
-    # Wait for workgroup to be available (custom wait loop since 'wait' command doesn't exist)
+    # Wait for workgroup to be available
     echo ""
     echo "  Waiting for workgroup to become available..."
     echo "  (This typically takes 5-10 minutes)"
@@ -166,7 +188,9 @@ else
     for i in {1..60}; do
         STATUS=$(aws redshift-serverless get-workgroup \
             --workgroup-name "$REDSHIFT_WORKGROUP" \
-            --query "workgroup.status" --output text 2>/dev/null || echo "NOTFOUND")
+            --region "$AWS_REGION" \
+            --query "workgroup.status" \
+            --output text 2>/dev/null || echo "NOTFOUND")
         
         if [ "$STATUS" = "AVAILABLE" ]; then
             echo ""
@@ -178,7 +202,6 @@ else
             break
         fi
         
-        # Progress indicator
         echo -n "."
         sleep 10
     done
@@ -191,7 +214,9 @@ fi
 echo ""
 REDSHIFT_ENDPOINT=$(aws redshift-serverless get-workgroup \
     --workgroup-name "$REDSHIFT_WORKGROUP" \
-    --query 'workgroup.endpoint.address' --output text 2>/dev/null || echo "pending")
+    --region "$AWS_REGION" \
+    --query 'workgroup.endpoint.address' \
+    --output text 2>/dev/null || echo "pending")
 
 echo "  Redshift Connection Info:"
 echo "  ========================="
@@ -200,16 +225,6 @@ echo "  Port:     5439"
 echo "  Database: $REDSHIFT_DATABASE"
 echo "  User:     $REDSHIFT_ADMIN_USER"
 echo ""
-
-# Save for other scripts
-cat > /tmp/redshift_config.sh << EOF
-export REDSHIFT_HOST="$REDSHIFT_ENDPOINT"
-export REDSHIFT_PORT="5439"
-export REDSHIFT_USER="$REDSHIFT_ADMIN_USER"
-# REDSHIFT_PASSWORD not saved - set via environment variable
-export REDSHIFT_DATABASE="$REDSHIFT_DATABASE"
-EOF
-
 echo -e "${GREEN}Step 9 Complete: Redshift Serverless Created${NC}"
 
 fi

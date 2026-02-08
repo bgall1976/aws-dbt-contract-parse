@@ -3,60 +3,46 @@
 # Step 2: Create SQS Queue
 # ==========================================
 
-#set -e  # Disabled - handle errors individually
+# Inline configuration
+AWS_REGION="${AWS_REGION:-us-east-2}"
+PROJECT_NAME="${PROJECT_NAME:-contract-pipeline}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
 
-# Load configuration
-source "$(dirname "$0")/00-config.sh"
+SQS_QUEUE_NAME="${PROJECT_NAME}-queue-${ENVIRONMENT}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
 echo -e "${YELLOW}Step 2: Creating SQS Queue...${NC}"
+echo "  Region: $AWS_REGION"
+echo "  Queue Name: $SQS_QUEUE_NAME"
 
 # Check if queue exists
-queue_exists() {
-    aws sqs get-queue-url --queue-name "$1" 2>/dev/null && return 0 || return 1
-}
+QUEUE_URL=$(aws sqs get-queue-url --queue-name "$SQS_QUEUE_NAME" --region "$AWS_REGION" --query 'QueueUrl' --output text 2>/dev/null)
 
-if queue_exists "$SQS_QUEUE_NAME"; then
-    echo "  SQS queue $SQS_QUEUE_NAME already exists, skipping..."
-    export SQS_QUEUE_URL=$(aws sqs get-queue-url --queue-name "$SQS_QUEUE_NAME" --query 'QueueUrl' --output text)
+if [ -n "$QUEUE_URL" ] && [ "$QUEUE_URL" != "None" ]; then
+    echo -e "  ${GREEN}[OK] Queue already exists${NC}"
+    echo "  Queue URL: $QUEUE_URL"
 else
-    echo "  Creating SQS queue: $SQS_QUEUE_NAME"
-    
-    # Create dead letter queue first
-    DLQ_URL=$(aws sqs create-queue \
-        --queue-name "${SQS_QUEUE_NAME}-dlq" \
-        --query 'QueueUrl' --output text)
-    
-    DLQ_ARN=$(aws sqs get-queue-attributes \
-        --queue-url "$DLQ_URL" \
-        --attribute-names QueueArn \
-        --query 'Attributes.QueueArn' --output text)
-    
-    echo "  Created DLQ: ${SQS_QUEUE_NAME}-dlq"
-    
-    # Create main queue with DLQ
-    export SQS_QUEUE_URL=$(aws sqs create-queue \
+    echo "  Creating queue..."
+    QUEUE_URL=$(aws sqs create-queue \
         --queue-name "$SQS_QUEUE_NAME" \
-        --attributes '{
-            "VisibilityTimeout": "900",
-            "MessageRetentionPeriod": "86400",
-            "RedrivePolicy": "{\"deadLetterTargetArn\":\"'"$DLQ_ARN"'\",\"maxReceiveCount\":\"3\"}"
-        }' \
-        --query 'QueueUrl' --output text)
+        --region "$AWS_REGION" \
+        --attributes VisibilityTimeout=300,MessageRetentionPeriod=1209600,ReceiveMessageWaitTimeSeconds=20 \
+        --query 'QueueUrl' --output text 2>&1)
     
-    echo -e "  ${GREEN}✓ Created $SQS_QUEUE_NAME${NC}"
+    if [ $? -eq 0 ] && [ -n "$QUEUE_URL" ]; then
+        echo -e "  ${GREEN}[OK] Created queue${NC}"
+        echo "  Queue URL: $QUEUE_URL"
+    else
+        echo -e "  ${RED}[FAILED] Could not create queue${NC}"
+        echo "  Error: $QUEUE_URL"
+    fi
 fi
 
-# Get queue ARN
-export SQS_QUEUE_ARN=$(aws sqs get-queue-attributes \
-    --queue-url "$SQS_QUEUE_URL" \
-    --attribute-names QueueArn \
-    --query 'Attributes.QueueArn' --output text)
-
-echo "  Queue URL: $SQS_QUEUE_URL"
-echo "  Queue ARN: $SQS_QUEUE_ARN"
-
-# Save to temp file for other scripts
-echo "export SQS_QUEUE_URL=\"$SQS_QUEUE_URL\"" > /tmp/sqs_config.sh
-echo "export SQS_QUEUE_ARN=\"$SQS_QUEUE_ARN\"" >> /tmp/sqs_config.sh
-
+echo ""
 echo -e "${GREEN}Step 2 Complete: SQS Queue Created${NC}"

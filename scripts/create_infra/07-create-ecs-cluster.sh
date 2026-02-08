@@ -3,34 +3,48 @@
 # Step 7: Create ECS Cluster
 # ==========================================
 
-#set -e  # Disabled - handle errors individually
+# Inline configuration
+AWS_REGION="${AWS_REGION:-us-east-2}"
+PROJECT_NAME="${PROJECT_NAME:-contract-pipeline}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
 
-# Load configuration
-source "$(dirname "$0")/00-config.sh"
+ECS_CLUSTER_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
 echo -e "${YELLOW}Step 7: Creating ECS Cluster...${NC}"
+echo "  Region: $AWS_REGION"
+echo "  Cluster Name: $ECS_CLUSTER_NAME"
 
 # Check if cluster exists
-cluster_exists() {
-    aws ecs describe-clusters --clusters "$1" \
-        --query "clusters[?status=='ACTIVE'].clusterName" \
-        --output text 2>/dev/null | grep -q "$1" && return 0 || return 1
-}
+CLUSTER_STATUS=$(aws ecs describe-clusters \
+    --clusters "$ECS_CLUSTER_NAME" \
+    --region "$AWS_REGION" \
+    --query 'clusters[0].status' \
+    --output text 2>/dev/null)
 
-if cluster_exists "$ECS_CLUSTER_NAME"; then
-    echo "  ECS cluster $ECS_CLUSTER_NAME already exists, skipping..."
+if [ "$CLUSTER_STATUS" == "ACTIVE" ]; then
+    echo -e "  ${GREEN}[OK] Cluster already exists and is active${NC}"
 else
-    echo "  Creating ECS cluster: $ECS_CLUSTER_NAME"
-    
-    aws ecs create-cluster \
+    echo "  Creating cluster..."
+    CREATE_RESULT=$(aws ecs create-cluster \
         --cluster-name "$ECS_CLUSTER_NAME" \
-        --capacity-providers FARGATE FARGATE_SPOT \
-        --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1
+        --region "$AWS_REGION" \
+        --query 'cluster.clusterArn' \
+        --output text 2>&1)
     
-    echo -e "  ${GREEN}✓ Created ECS cluster${NC}"
+    if [ $? -eq 0 ] && [ -n "$CREATE_RESULT" ] && [ "$CREATE_RESULT" != "None" ]; then
+        echo -e "  ${GREEN}[OK] Created ECS cluster${NC}"
+        echo "  Cluster ARN: $CREATE_RESULT"
+    else
+        echo -e "  ${RED}[FAILED] Could not create cluster${NC}"
+        echo "  Error: $CREATE_RESULT"
+    fi
 fi
 
-echo "  Cluster Name: $ECS_CLUSTER_NAME"
-echo "  Capacity Providers: FARGATE, FARGATE_SPOT"
-
+echo ""
 echo -e "${GREEN}Step 7 Complete: ECS Cluster Created${NC}"

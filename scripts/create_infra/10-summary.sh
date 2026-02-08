@@ -1,118 +1,102 @@
 #!/bin/bash
 # ==========================================
-# Step 10: Display Summary and Save Config
+# Step 10: Display Infrastructure Summary
 # ==========================================
 
-# Load configuration
-source "$(dirname "$0")/00-config.sh"
+# Inline configuration
+AWS_REGION="${AWS_REGION:-us-east-2}"
+PROJECT_NAME="${PROJECT_NAME:-contract-pipeline}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
 
-# Load all saved configs
-[ -f /tmp/sqs_config.sh ] && source /tmp/sqs_config.sh
-[ -f /tmp/ecr_config.sh ] && source /tmp/ecr_config.sh
-[ -f /tmp/iam_config.sh ] && source /tmp/iam_config.sh
-[ -f /tmp/redshift_config.sh ] && source /tmp/redshift_config.sh
+# Derived names
+S3_RAW_BUCKET="${PROJECT_NAME}-raw-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+S3_PROCESSED_BUCKET="${PROJECT_NAME}-processed-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+ECR_REPO_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+ECS_CLUSTER_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+SQS_QUEUE_NAME="${PROJECT_NAME}-queue-${ENVIRONMENT}"
+REDSHIFT_WORKGROUP="${PROJECT_NAME}-workgroup-${ENVIRONMENT}"
 
-# Get values if not loaded
-if [ -z "$ECR_REPO_URI" ]; then
-    ECR_REPO_URI=$(aws ecr describe-repositories \
-        --repository-names "$ECR_REPO_NAME" \
-        --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "not-found")
-fi
-
-if [ -z "$REDSHIFT_HOST" ]; then
-    REDSHIFT_HOST=$(aws redshift-serverless get-workgroup \
-        --workgroup-name "$REDSHIFT_WORKGROUP" \
-        --query 'workgroup.endpoint.address' --output text 2>/dev/null || echo "not-found")
-fi
-
-if [ -z "$SQS_QUEUE_URL" ]; then
-    SQS_QUEUE_URL=$(aws sqs get-queue-url --queue-name "$SQS_QUEUE_NAME" --query 'QueueUrl' --output text 2>/dev/null || echo "not-found")
-fi
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
 echo ""
-echo -e "${GREEN}=========================================="
-echo "Infrastructure Setup Complete!"
-echo -e "==========================================${NC}"
+echo "=========================================="
+echo -e "${GREEN}Infrastructure Summary${NC}"
+echo "=========================================="
 echo ""
-echo "Resources Created:"
-echo "  S3 Raw Bucket:        $S3_RAW_BUCKET"
-echo "  S3 Processed Bucket:  $S3_PROCESSED_BUCKET"
-echo "  SQS Queue:            $SQS_QUEUE_NAME"
-echo "  ECR Repository:       $ECR_REPO_URI"
-echo "  ECS Cluster:          $ECS_CLUSTER_NAME"
-echo "  ECS Task Family:      $ECS_TASK_FAMILY"
-echo "  Redshift Namespace:   $REDSHIFT_NAMESPACE"
-echo "  Redshift Workgroup:   $REDSHIFT_WORKGROUP"
-echo ""
-echo "Redshift Connection Info:"
-echo "  Host:     $REDSHIFT_HOST"
-echo "  Port:     5439"
-echo "  Database: $REDSHIFT_DATABASE"
-echo "  User:     $REDSHIFT_ADMIN_USER"
+echo "Region: $AWS_REGION"
+echo "Account: $AWS_ACCOUNT_ID"
 echo ""
 
-# Save full configuration to file
-CONFIG_FILE="/tmp/pipeline-config.env"
-cat > "$CONFIG_FILE" << EOF
-# ==========================================
-# Contract Pipeline Configuration
-# Generated: $(date)
-# ==========================================
+# S3 Buckets
+echo "--- S3 Buckets ---"
+echo "  Raw:       s3://${S3_RAW_BUCKET}"
+echo "  Processed: s3://${S3_PROCESSED_BUCKET}"
+echo ""
 
-# Project
-export PROJECT_NAME="${PROJECT_NAME}"
-export AWS_REGION="${AWS_REGION}"
-export ENVIRONMENT="${ENVIRONMENT}"
-export AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+# SQS Queue
+echo "--- SQS Queue ---"
+QUEUE_URL=$(aws sqs get-queue-url --queue-name "$SQS_QUEUE_NAME" --region "$AWS_REGION" --query 'QueueUrl' --output text 2>/dev/null || echo "Not found")
+echo "  Queue URL: $QUEUE_URL"
+echo ""
 
-# S3
-export S3_RAW_BUCKET="${S3_RAW_BUCKET}"
-export S3_PROCESSED_BUCKET="${S3_PROCESSED_BUCKET}"
+# ECR Repository
+echo "--- ECR Repository ---"
+ECR_URI=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "Not found")
+echo "  Repository: $ECR_URI"
+echo ""
 
-# SQS
-export SQS_QUEUE_URL="${SQS_QUEUE_URL}"
-export SQS_QUEUE_NAME="${SQS_QUEUE_NAME}"
-
-# ECR
-export ECR_REPO_URI="${ECR_REPO_URI}"
-export ECR_REPO_NAME="${ECR_REPO_NAME}"
-
-# ECS
-export ECS_CLUSTER_NAME="${ECS_CLUSTER_NAME}"
-export ECS_TASK_FAMILY="${ECS_TASK_FAMILY}"
+# ECS Cluster
+echo "--- ECS Cluster ---"
+CLUSTER_STATUS=$(aws ecs describe-clusters --clusters "$ECS_CLUSTER_NAME" --region "$AWS_REGION" --query 'clusters[0].status' --output text 2>/dev/null || echo "Not found")
+echo "  Cluster: $ECS_CLUSTER_NAME"
+echo "  Status: $CLUSTER_STATUS"
+echo ""
 
 # Redshift
-export REDSHIFT_HOST="${REDSHIFT_HOST}"
-export REDSHIFT_PORT="5439"
-export REDSHIFT_USER="${REDSHIFT_ADMIN_USER}"
-# REDSHIFT_PASSWORD not saved for security - use environment variable
-export REDSHIFT_DATABASE="${REDSHIFT_DATABASE}"
+echo "--- Redshift Serverless ---"
+REDSHIFT_ENDPOINT=$(aws redshift-serverless get-workgroup --workgroup-name "$REDSHIFT_WORKGROUP" --region "$AWS_REGION" --query 'workgroup.endpoint.address' --output text 2>/dev/null || echo "Not found")
+REDSHIFT_STATUS=$(aws redshift-serverless get-workgroup --workgroup-name "$REDSHIFT_WORKGROUP" --region "$AWS_REGION" --query 'workgroup.status' --output text 2>/dev/null || echo "Not found")
+echo "  Host: $REDSHIFT_ENDPOINT"
+echo "  Port: 5439"
+echo "  Database: contracts_dw"
+echo "  User: admin"
+echo "  Status: $REDSHIFT_STATUS"
+echo ""
 
-# IAM
-export IAM_ROLE_NAME="${IAM_ROLE_NAME}"
-export IAM_EXECUTION_ROLE_NAME="${IAM_EXECUTION_ROLE_NAME}"
-EOF
+# IAM Roles
+echo "--- IAM Roles ---"
+echo "  Task Role:      arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-ecs-task-role"
+echo "  Execution Role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-ecs-execution-role"
+echo ""
 
-echo "Configuration saved to: $CONFIG_FILE"
+# CloudWatch
+echo "--- CloudWatch Logs ---"
+echo "  Log Group: /ecs/${PROJECT_NAME}-${ENVIRONMENT}"
 echo ""
-echo -e "${YELLOW}Next Steps:${NC}"
+
+echo "=========================================="
+echo -e "${GREEN}Next Steps${NC}"
+echo "=========================================="
 echo ""
-echo "1. Load environment variables:"
-echo "   source $CONFIG_FILE"
+echo "1. Build and push Docker image (on local machine):"
+echo "   aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI"
+echo "   cd extraction"
+echo "   docker build -t $ECR_REPO_NAME ."
+echo "   docker tag $ECR_REPO_NAME:latest $ECR_URI:latest"
+echo "   docker push $ECR_URI:latest"
 echo ""
-echo "2. Build and push Docker image:"
-echo "   aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI"
-echo "   docker build -t $ECR_REPO_NAME ./extraction"
-echo "   docker tag $ECR_REPO_NAME:latest $ECR_REPO_URI:latest"
-echo "   docker push $ECR_REPO_URI:latest"
+echo "2. Create ECS Service:"
+echo "   bash 11-create-ecs-service.sh"
 echo ""
-echo "3. Upload a test PDF:"
-echo "   aws s3 cp sample_contract.pdf s3://$S3_RAW_BUCKET/incoming/"
+echo "3. Test the pipeline:"
+echo "   aws s3 cp sample.pdf s3://${S3_RAW_BUCKET}/incoming/"
 echo ""
-echo "4. Set up dbt (copy these to your local machine):"
-echo "   export REDSHIFT_HOST=$REDSHIFT_HOST"
-echo "   export REDSHIFT_PORT=5439"
-echo "   export REDSHIFT_USER=$REDSHIFT_ADMIN_USER"
-echo "   export REDSHIFT_PASSWORD='<your-password-here>'"
-echo "   export REDSHIFT_DATABASE=$REDSHIFT_DATABASE"
+echo "4. Monitor logs:"
+echo "   aws logs tail /ecs/${PROJECT_NAME}-${ENVIRONMENT} --follow"
 echo ""
+echo -e "${GREEN}Step 10 Complete: Summary Displayed${NC}"
