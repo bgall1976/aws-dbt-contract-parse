@@ -6,12 +6,12 @@
 }}
 
 /*
-    Staging model for contract header data extracted from PDFs.
-    Cleans and type-casts the raw JSON data from S3.
+    Staging model for contract header data.
+    Uses seed data for sample contracts.
 */
 
 with source as (
-    select * from {{ source('s3_json', 'contracts') }}
+    select * from {{ ref('contracts') }}
 ),
 
 cleaned as (
@@ -44,21 +44,11 @@ cleaned as (
             else 'ACTIVE'
         end as contract_status,
         
-        -- Nested data (keep as JSON for downstream processing)
-        rate_schedules,
-        amendments,
-        
-        -- Extraction metadata
-        cast(extraction_metadata.extracted_at as timestamp) as extracted_at,
-        extraction_metadata.confidence_score as extraction_confidence,
-        extraction_metadata.source_file as source_pdf_file,
-        
         -- Audit columns
         current_timestamp as _loaded_at
         
     from source
     where contract_id is not null
-      and provider_npi is not null
 )
 
 select * from cleaned

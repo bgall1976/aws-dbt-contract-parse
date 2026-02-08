@@ -1,0 +1,5 @@
+amendment_id,contract_id,amendment_date,description,rate_changes
+AMD-001,CON-001,2024-06-01,Annual rate adjustment,5% increase across all services
+AMD-002,CON-002,2024-07-15,Added new service codes,Added CPT 99285 for emergency services
+AMD-003,CON-003,2024-01-01,Contract extension,Extended termination date by 1 year
+AMD-004,CON-001,2024-09-01,Quality bonus adjustment,Added 2% quality incentive bonus

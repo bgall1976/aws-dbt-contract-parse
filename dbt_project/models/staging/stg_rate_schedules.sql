@@ -6,43 +6,38 @@
 }}
 
 /*
-    Staging model for rate schedules extracted from contracts.
-    Flattens the nested rate_schedules array from contract JSON.
+    Staging model for rate schedules.
+    Uses seed data for sample rate schedules.
 */
 
-with contracts as (
+with source as (
+    select * from {{ ref('rate_schedules') }}
+),
+
+contracts as (
     select * from {{ ref('stg_contracts') }}
 ),
 
--- Flatten the rate_schedules JSON array
-flattened_rates as (
+joined as (
     select
-        c.contract_id,
+        s.contract_id,
         c.payer_id,
         c.provider_npi,
         c.effective_date as contract_effective_date,
         c.termination_date as contract_termination_date,
-        
-        -- Extract fields from rate schedule array element
-        json_extract_path_text(rs, 'service_category') as service_category,
-        json_extract_path_text(rs, 'cpt_code') as cpt_code,
-        json_extract_path_text(rs, 'rate_type') as rate_type,
-        cast(json_extract_path_text(rs, 'rate_amount') as decimal(12,2)) as rate_amount,
-        cast(json_extract_path_text(rs, 'effective_date') as date) as rate_effective_date,
-        json_extract_path_text(rs, 'rate_unit') as rate_unit,
-        json_extract_path_text(rs, 'modifier') as rate_modifier,
-        
-        -- Generate unique rate line ID
+        s.service_category,
+        s.cpt_code,
+        s.rate_type,
+        cast(s.rate_amount as decimal(12,2)) as rate_amount,
+        cast(s.effective_date as date) as rate_effective_date,
+        s.rate_unit,
+        s.modifier as rate_modifier,
         row_number() over (
-            partition by c.contract_id 
-            order by json_extract_path_text(rs, 'service_category'),
-                     json_extract_path_text(rs, 'cpt_code')
+            partition by s.contract_id 
+            order by s.service_category, s.cpt_code
         ) as rate_line_number
-        
-    from contracts c,
-    -- Redshift JSON array flattening
-    json_array_elements(c.rate_schedules) as rs
-    where c.rate_schedules is not null
+    from source s
+    left join contracts c on s.contract_id = c.contract_id
 ),
 
 cleaned as (
@@ -73,7 +68,7 @@ cleaned as (
         -- Audit
         current_timestamp as _loaded_at
         
-    from flattened_rates
+    from joined
     where rate_amount is not null
       and rate_amount > 0
 )

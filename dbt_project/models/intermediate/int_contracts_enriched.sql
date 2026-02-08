@@ -79,10 +79,7 @@ enriched as (
         
         datediff(day, current_date, c.termination_date) as days_until_expiration,
         
-        -- Extraction metadata
-        c.extracted_at,
-        c.extraction_confidence,
-        c.source_pdf_file,
+        -- Audit
         c._loaded_at
         
     from contracts c

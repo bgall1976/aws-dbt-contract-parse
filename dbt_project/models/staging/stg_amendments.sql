@@ -6,38 +6,34 @@
 }}
 
 /*
-    Staging model for contract amendments extracted from PDFs.
-    Flattens the nested amendments array from contract JSON.
+    Staging model for contract amendments.
+    Uses seed data for sample amendments.
 */
 
-with contracts as (
+with source as (
+    select * from {{ ref('amendments') }}
+),
+
+contracts as (
     select * from {{ ref('stg_contracts') }}
 ),
 
--- Flatten the amendments JSON array
-flattened_amendments as (
+joined as (
     select
-        c.contract_id,
+        s.amendment_id,
+        s.contract_id,
         c.payer_id,
         c.provider_npi,
         c.effective_date as contract_effective_date,
-        
-        -- Extract fields from amendment array element
-        json_extract_path_text(amd, 'amendment_id') as amendment_id,
-        cast(json_extract_path_text(amd, 'effective_date') as date) as amendment_effective_date,
-        json_extract_path_text(amd, 'description') as amendment_description,
-        json_extract_path_text(amd, 'amendment_type') as amendment_type,
-        json_extract_path_text(amd, 'changes') as amendment_changes_json,
-        
-        -- Sequence amendments
+        cast(s.amendment_date as date) as amendment_date,
+        s.description as amendment_description,
+        s.rate_changes,
         row_number() over (
-            partition by c.contract_id 
-            order by cast(json_extract_path_text(amd, 'effective_date') as date)
+            partition by s.contract_id 
+            order by s.amendment_date
         ) as amendment_sequence
-        
-    from contracts c,
-    json_array_elements(c.amendments) as amd
-    where c.amendments is not null
+    from source s
+    left join contracts c on s.contract_id = c.contract_id
 ),
 
 cleaned as (
@@ -52,10 +48,10 @@ cleaned as (
         -- Amendment details
         trim(amendment_id) as amendment_id,
         amendment_sequence,
-        amendment_effective_date,
+        amendment_date as amendment_effective_date,
         trim(amendment_description) as amendment_description,
-        upper(trim(coalesce(amendment_type, 'MODIFICATION'))) as amendment_type,
-        amendment_changes_json,
+        'MODIFICATION' as amendment_type,
+        trim(rate_changes) as amendment_changes,
         
         -- Contract context
         contract_effective_date,
@@ -63,7 +59,7 @@ cleaned as (
         -- Audit
         current_timestamp as _loaded_at
         
-    from flattened_amendments
+    from joined
     where amendment_id is not null
 )
 

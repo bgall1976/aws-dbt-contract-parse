@@ -1,62 +1,14 @@
 version: 2
 
 sources:
-  - name: s3_json
-    description: "Extracted contract JSON data from S3 processed bucket"
-    database: "{{ env_var('REDSHIFT_DATABASE', 'contracts_dw') }}"
-    schema: spectrum_schema
-    
+  - name: raw_contracts
+    description: Raw contract data from seeds (sample data)
+    database: contracts_dw
+    schema: public
     tables:
       - name: contracts
-        description: "Contract header information extracted from PDFs"
-        external:
-          location: "s3://{{ var('s3_processed_bucket') }}/contracts/"
-          file_format: json
-          row_format: 
-            serde: 'org.openx.data.jsonserde.JsonSerDe'
-          table_properties:
-            serialization.format: '1'
-        columns:
-          - name: contract_id
-            description: "Unique contract identifier"
-            tests:
-              - not_null
-          - name: payer_name
-            description: "Insurance payer name"
-          - name: payer_id
-            description: "Payer identifier code"
-          - name: provider_npi
-            description: "National Provider Identifier"
-            tests:
-              - not_null
-          - name: provider_name
-            description: "Healthcare provider name"
-          - name: effective_date
-            description: "Contract effective date"
-          - name: termination_date
-            description: "Contract termination date"
-          - name: rate_schedules
-            description: "Array of rate schedule objects"
-          - name: amendments
-            description: "Array of contract amendments"
-          - name: extraction_metadata
-            description: "Metadata about the extraction process"
-            
+        description: Contract header information
       - name: rate_schedules
-        description: "Flattened rate schedule data"
-        external:
-          location: "s3://{{ var('s3_processed_bucket') }}/rate_schedules/"
-          file_format: json
-        columns:
-          - name: contract_id
-            description: "Parent contract ID"
-          - name: service_category
-            description: "Category of healthcare service"
-          - name: cpt_code
-            description: "CPT/HCPCS procedure code"
-          - name: rate_type
-            description: "Type of rate (per_diem, percentage, flat_fee)"
-          - name: rate_amount
-            description: "Contracted rate amount"
-          - name: effective_date
-            description: "Rate effective date"
+        description: Rate schedule data from contracts
+      - name: amendments
+        description: Contract amendments

@@ -63,9 +63,7 @@ final as (
         
         -- Audit
         dbt_scd_id as scd_id,
-        extracted_at,
-        extraction_confidence,
-        source_pdf_file
+        current_timestamp as _loaded_at
         
     from snapshot_data
 )
@@ -94,9 +92,7 @@ final as (
         true as is_current,
         1 as version_number,
         cast(null as varchar(256)) as scd_id,
-        extracted_at,
-        extraction_confidence,
-        source_pdf_file
+        current_timestamp as _loaded_at
     from current_data
 )
 
