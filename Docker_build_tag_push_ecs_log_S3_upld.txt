@@ -1,0 +1,15 @@
+cd C:\Users\Dell\Documents\github_portfolio\aws-dbt-contract-parse\extraction
+
+docker build -t contract-pipeline-dev .
+
+docker tag contract-pipeline-dev:latest 350358882930.dkr.ecr.us-east-2.amazonaws.com/contract-pipeline-dev:latest
+
+docker push 350358882930.dkr.ecr.us-east-2.amazonaws.com/contract-pipeline-dev:latest
+
+aws ecs update-service --cluster contract-pipeline-dev --service contract-extractor --force-new-deployment --region us-east-2
+
+aws s3 cp C:\Users\Dell\Documents\github_portfolio\aws-dbt-contract-parse\sample-contract.pdf s3://contract-pipeline-raw-dev-350358882930/incoming/
+
+aws logs tail /ecs/contract-pipeline-dev --follow --region us-east-2
+
+

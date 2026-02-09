@@ -2,42 +2,180 @@
 
 An end-to-end data pipeline that extracts structured data from healthcare contract PDFs using AI (Docling), loads it into Redshift Serverless, and transforms it with dbt into an analytics-ready dimensional model.
 
-## Architecture
+![Pipeline Status](https://img.shields.io/badge/pipeline-operational-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![dbt](https://img.shields.io/badge/dbt-1.11-orange)
+
+---
+
+## Architecture Overview
+
+```mermaid
+flowchart TB
+    subgraph SOURCES["Data Sources"]
+        PDF[("PDF Contracts<br/>Healthcare Agreements")]
+    end
+
+    subgraph STORAGE["AWS Storage"]
+        S3_RAW[("S3 Raw Bucket<br/>Incoming PDFs")]
+        S3_PROCESSED[("S3 Processed<br/>Extracted JSON")]
+    end
+
+    subgraph QUEUE["Message Queue"]
+        SQS["AWS SQS<br/>Processing Queue"]
+    end
+
+    subgraph EXTRACTION["AI Extraction"]
+        ECS["ECS Fargate<br/>Docling Container"]
+    end
+
+    subgraph WAREHOUSE["Data Warehouse"]
+        REDSHIFT[("Redshift Serverless<br/>Analytics DW")]
+    end
+
+    subgraph TRANSFORM["Transformation"]
+        DBT["dbt Core<br/>Data Models"]
+    end
+
+    subgraph SERVING["Analytics Ready"]
+        STAGING["Staging Models<br/>stg_contracts"]
+        INTERMEDIATE["Intermediate<br/>int_contracts_enriched"]
+        MARTS["Marts Layer<br/>Star Schema"]
+    end
+
+    PDF --> S3_RAW
+    S3_RAW --> SQS
+    SQS --> ECS
+    ECS --> S3_PROCESSED
+    S3_PROCESSED --> REDSHIFT
+    REDSHIFT --> DBT
+    DBT --> STAGING
+    STAGING --> INTERMEDIATE
+    INTERMEDIATE --> MARTS
+```
+
+---
+
+## Project Structure
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   PDF       │     │    S3       │     │    SQS      │     │    ECS      │
-│  Upload     │────▶│  Raw Bucket │────▶│   Queue     │────▶│  Fargate    │
-└─────────────┘     └─────────────┘     └─────────────┘     │  (Docling)  │
-                                                            └──────┬──────┘
-                                                                   │
-                    ┌─────────────┐     ┌─────────────┐            │
-                    │  Redshift   │◀────│    S3       │◀───────────┘
-                    │ Serverless  │     │  Processed  │
-                    └──────┬──────┘     └─────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │    dbt      │
-                    │  Transform  │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │  Analytics  │
-                    │   Ready     │
-                    └─────────────┘
+aws-dbt-contract-parse/
+├── extraction/                 # Docling PDF extraction service
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── src/
+│       ├── extractor.py
+│       ├── docling_parser.py
+│       ├── contract_schema.py
+│       └── s3_handler.py
+├── dbt_project/               # dbt transformation models
+│   ├── dbt_project.yml
+│   ├── models/
+│   │   ├── staging/           # stg_contracts, stg_rate_schedules
+│   │   ├── intermediate/      # int_contracts_enriched
+│   │   └── marts/core/        # dim_*, fact_contracted_rates
+│   ├── seeds/                 # Reference data
+│   ├── snapshots/             # SCD Type 2 tracking
+│   └── tests/                 # Data quality tests
+├── scripts/
+│   ├── create_infra/          # AWS infrastructure scripts (01-10)
+│   └── teardown/              # Cleanup scripts (01-11)
+├── infrastructure/            # Terraform configs (alternative)
+│   ├── main.tf
+│   └── variables.tf
+├── .github/workflows/         # CI/CD pipelines
+└── docker-compose.yml         # Local development
 ```
 
-## Components
+---
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Storage | S3 | Raw PDFs and processed JSON |
-| Queue | SQS | Decouple upload from processing |
-| Extraction | ECS Fargate + Docling | AI-powered PDF parsing |
-| Data Warehouse | Redshift Serverless | Analytical storage |
-| Transformation | dbt | Data modeling and testing |
+## Key Features
 
-## Prerequisites
+| Feature | Implementation | Details |
+|---------|---------------|---------|
+| **PDF Extraction** | Docling + ECS Fargate | AI-powered contract parsing |
+| **Storage** | AWS S3 | Raw PDFs and processed JSON |
+| **Queue** | AWS SQS | Decoupled event-driven processing |
+| **Data Warehouse** | Redshift Serverless | Pay-per-query analytics |
+| **Transformation** | dbt Core | Tested, documented models |
+| **Data Model** | Star Schema | Optimized for analytics |
+| **IaC** | Bash Scripts / Terraform | Reproducible infrastructure |
+
+---
+
+## Data Model
+
+```mermaid
+erDiagram
+    fact_contracted_rates ||--o{ dim_contract : "contract_key"
+    fact_contracted_rates ||--o{ dim_payer : "payer_key"
+    fact_contracted_rates ||--o{ dim_provider : "provider_key"
+    fact_contracted_rates ||--o{ dim_service : "service_key"
+    fact_contracted_rates ||--o{ dim_date : "date_key"
+    
+    fact_contracted_rates {
+        string rate_key PK
+        string contract_key FK
+        string payer_key FK
+        string provider_key FK
+        string service_key FK
+        int date_key FK
+        decimal rate_amount
+        string rate_type
+        string rate_unit
+    }
+    
+    dim_contract {
+        string contract_key PK
+        string contract_id
+        date effective_date
+        date termination_date
+        string contract_status
+        boolean is_current
+    }
+    
+    dim_payer {
+        string payer_key PK
+        string payer_id
+        string payer_name
+        string payer_type
+    }
+    
+    dim_provider {
+        string provider_key PK
+        string provider_npi
+        string provider_name
+    }
+    
+    dim_service {
+        string service_key PK
+        string cpt_code
+        string service_category
+    }
+    
+    dim_date {
+        int date_key PK
+        date full_date
+        int year
+        int month
+        int day
+    }
+```
+
+### Model Layers
+
+| Layer | Models | Description |
+|-------|--------|-------------|
+| **Staging** | `stg_contracts`, `stg_rate_schedules`, `stg_amendments` | Cleaned, typed source data |
+| **Intermediate** | `int_contracts_enriched` | Business logic, aggregations |
+| **Marts** | `dim_*`, `fact_contracted_rates` | Analytics-ready star schema |
+
+---
+
+## Deployment Guide
+
+### Prerequisites
 
 - AWS Account with appropriate permissions
 - AWS CLI installed and configured
@@ -46,8 +184,6 @@ An end-to-end data pipeline that extracts structured data from healthcare contra
 - Git for Windows
 
 ---
-
-## Deployment Guide
 
 ### Phase 1: AWS Infrastructure Setup
 
@@ -271,29 +407,18 @@ SELECT * FROM public_marts.fact_contracted_rates LIMIT 10;
 
 ---
 
-## dbt Models
+## Cost Estimates
 
-### Staging Layer
-| Model | Description |
-|-------|-------------|
-| `stg_contracts` | Cleaned contract header data |
-| `stg_rate_schedules` | Flattened rate schedule data |
-| `stg_amendments` | Contract amendments |
+| Service | Estimated Monthly Cost |
+|---------|------------------------|
+| Redshift Serverless | $0 (idle) - $50+ (active) |
+| S3 | < $1 |
+| SQS | < $1 |
+| ECS Fargate | $0 (stopped) - $30+ (running) |
+| ECR | < $1 |
+| **Total (idle)** | **< $5/month** |
 
-### Intermediate Layer
-| Model | Description |
-|-------|-------------|
-| `int_contracts_enriched` | Contracts with rate and amendment summaries |
-
-### Marts Layer (Star Schema)
-| Model | Description |
-|-------|-------------|
-| `dim_date` | Date dimension |
-| `dim_payer` | Payer dimension |
-| `dim_provider` | Provider dimension |
-| `dim_service` | Service/CPT code dimension |
-| `dim_contract` | Contract dimension (SCD Type 2) |
-| `fact_contracted_rates` | Rate facts |
+**Note:** Redshift Serverless only charges when queries are running. ECS only charges when tasks are running.
 
 ---
 
@@ -317,21 +442,6 @@ bash 09-delete-cloudwatch-logs.sh
 bash 10-delete-security-groups.sh
 bash 11-summary.sh
 ```
-
----
-
-## Cost Estimates
-
-| Service | Estimated Monthly Cost |
-|---------|------------------------|
-| Redshift Serverless | $0 (idle) - $50+ (active) |
-| S3 | < $1 |
-| SQS | < $1 |
-| ECS Fargate | $0 (stopped) - $30+ (running) |
-| ECR | < $1 |
-| **Total (idle)** | **< $5/month** |
-
-**Note:** Redshift Serverless only charges when queries are running. ECS only charges when tasks are running.
 
 ---
 

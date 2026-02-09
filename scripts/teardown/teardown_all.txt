@@ -1,0 +1,85 @@
+################RUN EACH PART SEPARATELY##################
+
+
+export AWS_REGION=us-east-2
+
+# Delete ECS Service
+aws ecs update-service --cluster contract-pipeline-dev --service contract-extractor --desired-count 0 --region us-east-2 2>/dev/null
+aws ecs delete-service --cluster contract-pipeline-dev --service contract-extractor --force --region us-east-2 2>/dev/null
+
+# Delete ECS Cluster
+aws ecs delete-cluster --cluster contract-pipeline-dev --region us-east-2 2>/dev/null
+
+# Deregister Task Definitions
+for arn in $(aws ecs list-task-definitions --family-prefix contract-pipeline-task --query 'taskDefinitionArns[]' --output text --region us-east-2 2>/dev/null); do
+    aws ecs deregister-task-definition --task-definition "$arn" --region us-east-2 2>/dev/null
+done
+
+# Delete ECR Repository
+aws ecr delete-repository --repository-name contract-pipeline-dev --force --region us-east-2 2>/dev/null
+
+# Delete S3 Buckets (must empty first)
+aws s3 rm s3://contract-pipeline-raw-dev-350358882930 --recursive 2>/dev/null
+aws s3 rb s3://contract-pipeline-raw-dev-350358882930 --force 2>/dev/null
+aws s3 rm s3://contract-pipeline-processed-dev-350358882930 --recursive 2>/dev/null
+aws s3 rb s3://contract-pipeline-processed-dev-350358882930 --force 2>/dev/null
+
+# Delete SQS Queue
+aws sqs delete-queue --queue-url "https://sqs.us-east-2.amazonaws.com/350358882930/contract-pipeline-queue-dev" --region us-east-2 2>/dev/null
+
+# Delete CloudWatch Log Group
+aws logs delete-log-group --log-group-name /ecs/contract-pipeline-dev --region us-east-2 2>/dev/null
+
+# Delete IAM Policies and Roles
+aws iam detach-role-policy --role-name contract-pipeline-ecs-task-role --policy-arn arn:aws:iam::350358882930:policy/contract-pipeline-task-policy 2>/dev/null
+aws iam detach-role-policy --role-name contract-pipeline-ecs-execution-role --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null
+aws iam delete-policy --policy-arn arn:aws:iam::350358882930:policy/contract-pipeline-task-policy 2>/dev/null
+aws iam delete-role --role-name contract-pipeline-ecs-task-role 2>/dev/null
+aws iam delete-role --role-name contract-pipeline-ecs-execution-role 2>/dev/null
+aws iam delete-role --role-name contract-pipeline-ecs-task-role-dev 2>/dev/null
+aws iam delete-role --role-name contract-pipeline-ecs-execution-role-dev 2>/dev/null
+
+# Delete Redshift Serverless
+aws redshift-serverless delete-workgroup --workgroup-name contract-pipeline-workgroup-dev --region us-east-2 2>/dev/null
+echo "Waiting 60s for workgroup deletion..."
+sleep 60
+aws redshift-serverless delete-namespace --namespace-name contract-pipeline-dev --region us-east-2 2>/dev/null
+
+# Delete Security Group
+SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=contract-pipeline-redshift-sg" --query 'SecurityGroups[0].GroupId' --output text --region us-east-2 2>/dev/null)
+if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+    aws ec2 delete-security-group --group-id "$SG_ID" --region us-east-2 2>/dev/null
+fi
+
+
+
+
+# Delete the remaining IAM roles
+
+# Delete inline policy from task role
+aws iam delete-role-policy --role-name contract-pipeline-ecs-task-role-dev --policy-name ContractPipelineAccess
+
+# Detach any policies first
+aws iam list-attached-role-policies --role-name contract-pipeline-ecs-execution-role-dev --query 'AttachedPolicies[*].PolicyArn' --output text | xargs -n1 aws iam detach-role-policy --role-name contract-pipeline-ecs-execution-role-dev --policy-arn
+aws iam list-attached-role-policies --role-name contract-pipeline-ecs-task-role-dev --query 'AttachedPolicies[*].PolicyArn' --output text | xargs -n1 aws iam detach-role-policy --role-name contract-pipeline-ecs-task-role-dev --policy-arn
+
+# Then delete the roles
+aws iam delete-role --role-name contract-pipeline-ecs-execution-role-dev
+aws iam delete-role --role-name contract-pipeline-ecs-task-role-dev
+
+
+# Verify they're gone
+aws iam list-roles --query 'Roles[?contains(RoleName, `contract-pipeline`)].RoleName'
+
+echo "Teardown complete!"
+
+
+#VERIFY
+
+echo "=== ECS ===" && aws ecs list-clusters --region us-east-2
+echo "=== ECR ===" && aws ecr describe-repositories --region us-east-2 --query 'repositories[*].repositoryName'
+echo "=== S3 ===" && aws s3 ls | grep contract
+echo "=== SQS ===" && aws sqs list-queues --region us-east-2
+echo "=== IAM Roles ===" && aws iam list-roles --query 'Roles[?contains(RoleName, `contract-pipeline`)].RoleName'
+echo "=== Redshift ===" && aws redshift-serverless list-workgroups --region us-east-2 --query 'workgroups[*].workgroupName'
+

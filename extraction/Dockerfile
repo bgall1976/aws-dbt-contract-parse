@@ -29,6 +29,13 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download OCR models so they don't need to be downloaded at runtime
+# This also ensures the models directory is writable
+RUN python -c "from rapidocr import RapidOCR; RapidOCR()" || true
+
+# Make the models directory writable for non-root user
+RUN chmod -R 777 /usr/local/lib/python3.11/site-packages/rapidocr/models || true
+
 # Copy application code
 COPY src/ ./src/
 
