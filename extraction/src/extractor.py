@@ -2,14 +2,16 @@
 PDF Contract Extraction Service
 
 Main entry point for the extraction pipeline.
-Triggered by S3 events when new PDFs arrive.
+Polls SQS for S3 event notifications when new PDFs arrive.
 """
 
 import os
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
+from urllib.parse import unquote_plus
 
 import boto3
 import click
@@ -57,17 +59,19 @@ class ContractExtractor:
         self,
         raw_bucket: str,
         processed_bucket: str,
-        aws_region: str = "us-east-1"
+        aws_region: str = "us-east-2"
     ):
         self.raw_bucket = raw_bucket
         self.processed_bucket = processed_bucket
+        self.aws_region = aws_region
         self.s3_handler = S3Handler(aws_region)
         self.parser = DoclingParser()
         
         logger.info(
             "Initialized ContractExtractor",
             raw_bucket=raw_bucket,
-            processed_bucket=processed_bucket
+            processed_bucket=processed_bucket,
+            region=aws_region
         )
     
     def process_pdf(self, s3_key: str) -> Optional[dict]:
@@ -172,7 +176,7 @@ class ContractExtractor:
     
     def process_s3_event(self, event: dict) -> list:
         """
-        Process S3 event notification (Lambda/SQS trigger).
+        Process S3 event notification (from SQS message).
         
         Args:
             event: S3 event notification payload
@@ -186,6 +190,10 @@ class ContractExtractor:
             s3_info = record.get("s3", {})
             bucket = s3_info.get("bucket", {}).get("name")
             key = s3_info.get("object", {}).get("key")
+            
+            # URL decode the key (S3 events encode special characters)
+            if key:
+                key = unquote_plus(key)
             
             if bucket != self.raw_bucket:
                 logger.warning(
@@ -207,6 +215,100 @@ class ContractExtractor:
         return processed
 
 
+class SQSPoller:
+    """
+    Polls SQS queue for S3 event notifications.
+    """
+    
+    def __init__(
+        self,
+        queue_url: str,
+        extractor: ContractExtractor,
+        aws_region: str = "us-east-2",
+        wait_time: int = 20,
+        max_messages: int = 10
+    ):
+        self.queue_url = queue_url
+        self.extractor = extractor
+        self.aws_region = aws_region
+        self.wait_time = wait_time
+        self.max_messages = max_messages
+        self.sqs_client = boto3.client('sqs', region_name=aws_region)
+        
+        logger.info(
+            "Initialized SQSPoller",
+            queue_url=queue_url,
+            wait_time=wait_time
+        )
+    
+    def poll_forever(self):
+        """
+        Continuously poll SQS for messages and process them.
+        """
+        logger.info("Starting SQS polling loop")
+        
+        while True:
+            try:
+                self._poll_once()
+            except Exception as e:
+                logger.exception("Error in polling loop", error=str(e))
+                time.sleep(5)  # Brief pause before retrying
+    
+    def _poll_once(self):
+        """
+        Poll SQS once and process any messages.
+        """
+        response = self.sqs_client.receive_message(
+            QueueUrl=self.queue_url,
+            MaxNumberOfMessages=self.max_messages,
+            WaitTimeSeconds=self.wait_time,
+            MessageAttributeNames=['All']
+        )
+        
+        messages = response.get('Messages', [])
+        
+        if not messages:
+            logger.debug("No messages received")
+            return
+        
+        logger.info(f"Received {len(messages)} messages")
+        
+        for message in messages:
+            try:
+                self._process_message(message)
+                
+                # Delete message after successful processing
+                self.sqs_client.delete_message(
+                    QueueUrl=self.queue_url,
+                    ReceiptHandle=message['ReceiptHandle']
+                )
+                logger.info("Message processed and deleted", message_id=message['MessageId'])
+                
+            except Exception as e:
+                logger.exception(
+                    "Error processing message",
+                    message_id=message['MessageId'],
+                    error=str(e)
+                )
+    
+    def _process_message(self, message: dict):
+        """
+        Process a single SQS message containing S3 event.
+        """
+        body = json.loads(message['Body'])
+        
+        # Handle SNS-wrapped messages
+        if 'Message' in body:
+            body = json.loads(body['Message'])
+        
+        # Process S3 event
+        if 'Records' in body:
+            processed = self.extractor.process_s3_event(body)
+            logger.info(f"Processed {len(processed)} contracts from message")
+        else:
+            logger.warning("Message does not contain S3 Records", body=body)
+
+
 @click.command()
 @click.option(
     "--raw-bucket",
@@ -221,6 +323,18 @@ class ContractExtractor:
     help="S3 bucket for processed JSON output"
 )
 @click.option(
+    "--sqs-queue-url",
+    envvar="SQS_QUEUE_URL",
+    default=None,
+    help="SQS queue URL to poll for S3 events"
+)
+@click.option(
+    "--aws-region",
+    envvar="AWS_REGION",
+    default="us-east-2",
+    help="AWS region"
+)
+@click.option(
     "--s3-key",
     default=None,
     help="Specific S3 key to process (for manual runs)"
@@ -230,14 +344,28 @@ class ContractExtractor:
     default=None,
     help="Path to S3 event JSON file (for batch processing)"
 )
-def main(raw_bucket: str, processed_bucket: str, s3_key: str, event_file: str):
+@click.option(
+    "--poll",
+    is_flag=True,
+    default=False,
+    help="Poll SQS continuously for messages"
+)
+def main(
+    raw_bucket: str,
+    processed_bucket: str,
+    sqs_queue_url: str,
+    aws_region: str,
+    s3_key: str,
+    event_file: str,
+    poll: bool
+):
     """
     PDF Contract Extraction Service
     
     Extracts structured data from healthcare provider contracts
     and outputs partitioned JSON to S3.
     """
-    extractor = ContractExtractor(raw_bucket, processed_bucket)
+    extractor = ContractExtractor(raw_bucket, processed_bucket, aws_region)
     
     if s3_key:
         # Process single file
@@ -254,9 +382,22 @@ def main(raw_bucket: str, processed_bucket: str, s3_key: str, event_file: str):
             event = json.load(f)
         processed = extractor.process_s3_event(event)
         click.echo(f"Processed {len(processed)} contracts")
+    
+    elif poll or sqs_queue_url:
+        # Poll SQS continuously
+        if not sqs_queue_url:
+            click.echo("SQS_QUEUE_URL is required for polling mode", err=True)
+            raise SystemExit(1)
+        
+        poller = SQSPoller(
+            queue_url=sqs_queue_url,
+            extractor=extractor,
+            aws_region=aws_region
+        )
+        poller.poll_forever()
         
     else:
-        click.echo("Specify --s3-key or --event-file", err=True)
+        click.echo("Specify --s3-key, --event-file, or --poll (with SQS_QUEUE_URL)", err=True)
         raise SystemExit(1)
 
 
