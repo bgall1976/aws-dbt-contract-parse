@@ -12,4 +12,17 @@ aws s3 cp C:\Users\Dell\Documents\github_portfolio\aws-dbt-contract-parse\sample
 
 aws logs tail /ecs/contract-pipeline-dev --follow --region us-east-2
 
+aws logs tail /ecs/contract-pipeline-dev --since 30m --region us-east-2
+
+
+
+#check status of deployment
+aws ecs describe-tasks --cluster contract-pipeline-dev --tasks 184608f95b6e4cc38d2644172fbad3d2 --region us-east-2 --query "tasks[0].{lastStatus:lastStatus,stoppedReason:stoppedReason,startedAt:startedAt}"
+
+# Register new task definition with more memory
+aws ecs register-task-definition --family contract-pipeline-task --network-mode awsvpc --requires-compatibilities FARGATE --cpu "1024" --memory "2048" --execution-role-arn "arn:aws:iam::350358882930:role/contract-pipeline-ecs-execution-role" --task-role-arn "arn:aws:iam::350358882930:role/contract-pipeline-ecs-task-role" --container-definitions "[{\"name\":\"extractor\",\"image\":\"350358882930.dkr.ecr.us-east-2.amazonaws.com/contract-pipeline-dev:latest\",\"essential\":true,\"command\":[\"--poll\"],\"environment\":[{\"name\":\"AWS_REGION\",\"value\":\"us-east-2\"},{\"name\":\"S3_RAW_BUCKET\",\"value\":\"contract-pipeline-raw-dev-350358882930\"},{\"name\":\"S3_PROCESSED_BUCKET\",\"value\":\"contract-pipeline-processed-dev-350358882930\"},{\"name\":\"SQS_QUEUE_URL\",\"value\":\"https://sqs.us-east-2.amazonaws.com/350358882930/contract-pipeline-queue-dev\"}],\"logConfiguration\":{\"logDriver\":\"awslogs\",\"options\":{\"awslogs-group\":\"/ecs/contract-pipeline-dev\",\"awslogs-region\":\"us-east-2\",\"awslogs-stream-prefix\":\"extractor\"}}}]" --region us-east-2
+
+
+aws ecs update-service --cluster contract-pipeline-dev --service contract-extractor --task-definition contract-pipeline-task --force-new-deployment --region us-east-2
+
 
