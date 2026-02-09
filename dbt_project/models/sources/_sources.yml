@@ -2,13 +2,21 @@ version: 2
 
 sources:
   - name: raw_contracts
-    description: Raw contract data from seeds (sample data)
+    description: Raw contract data loaded from S3
     database: contracts_dw
     schema: public
     tables:
-      - name: contracts
-        description: Contract header information
-      - name: rate_schedules
-        description: Rate schedule data from contracts
-      - name: amendments
-        description: Contract amendments
+      - name: raw_contracts
+        description: Contract JSON loaded via COPY command
+        columns:
+          - name: contract_id
+          - name: payer_name
+          - name: payer_id
+          - name: provider_npi
+          - name: provider_name
+          - name: effective_date
+          - name: termination_date
+          - name: rate_schedules
+          - name: amendments
+          - name: extraction_metadata
+          - name: loaded_at

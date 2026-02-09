@@ -1,0 +1,12 @@
+
+aws iam create-role --role-name contract-pipeline-redshift-role --assume-role-policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"redshift.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}" --region us-east-2
+
+aws iam attach-role-policy --role-name contract-pipeline-redshift-role --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+aws redshift-serverless update-namespace --namespace-name contract-pipeline-dev --iam-roles "arn:aws:iam::350358882930:role/contract-pipeline-redshift-role" --region us-east-2
+
+aws redshift-serverless get-workgroup --workgroup-name contract-pipeline-workgroup-dev --region us-east-2 --query "workgroup.endpoint.address" --output text
+
+Your Redshift endpoint is:
+contract-pipeline-workgroup-dev.350358882930.us-east-2.redshift-serverless.amazonaws.com
+

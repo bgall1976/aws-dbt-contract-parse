@@ -1,0 +1,17 @@
+{
+  "contract_id": "CON-2024-001",
+  "payer_name": "Aetna",
+  "payer_id": "A-001",
+  "provider_npi": "1234567890",
+  "provider_name": "Metro\tGeneral\tHospital",
+  "effective_date": null,
+  "termination_date": null,
+  "rate_schedules": [],
+  "amendments": [],
+  "extraction_metadata": {
+    "extracted_at": "2026-02-09T02:44:52.478866Z",
+    "confidence_score": 0.6,
+    "source_file": "incoming/sample-contract.pdf",
+    "extractor_version": "1.0.0"
+  }
+}

@@ -7,9 +7,15 @@
 
 /*
     Service/Procedure dimension table.
-    Combines CPT codes and service categories from contracts
-    with reference data.
+    Built from rate schedules extracted from contracts.
 */
+
+-- Check if reference seed exists
+{% set ref_exists = adapter.get_relation(
+    database=target.database,
+    schema=target.schema,
+    identifier='ref_service_categories'
+) %}
 
 with rate_schedules as (
     select distinct
@@ -17,10 +23,6 @@ with rate_schedules as (
         cpt_code
     from {{ ref('stg_rate_schedules') }}
     where cpt_code is not null
-),
-
-reference as (
-    select * from {{ ref('ref_service_categories') }}
 ),
 
 -- Get rate statistics per service
@@ -39,15 +41,20 @@ service_stats as (
 final as (
     select
         -- Surrogate key
-        {{ dbt_utils.generate_surrogate_key(['rs.cpt_code']) }} as service_key,
+        md5(rs.cpt_code) as service_key,
         
         -- Natural keys
         rs.cpt_code,
         rs.service_category as category_code,
         
-        -- Attributes from reference
+        -- Attributes from reference (if available)
+        {% if ref_exists %}
         r.category_name,
         r.description as category_description,
+        {% else %}
+        rs.service_category as category_name,
+        null::varchar(500) as category_description,
+        {% endif %}
         
         -- Statistics
         coalesce(ss.contracts_with_service, 0) as contracts_with_service,
@@ -60,8 +67,10 @@ final as (
         current_timestamp as _created_at
         
     from rate_schedules rs
-    left join reference r on upper(rs.service_category) = upper(r.category_code)
     left join service_stats ss on rs.cpt_code = ss.cpt_code
+    {% if ref_exists %}
+    left join {{ ref('ref_service_categories') }} ref on upper(rs.service_category) = upper(ref.category_code)
+    {% endif %}
 )
 
 select * from final

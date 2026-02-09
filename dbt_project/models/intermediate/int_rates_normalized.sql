@@ -1,85 +1,78 @@
 {{
     config(
-        materialized='ephemeral',
-        tags=['intermediate', 'rates']
+        materialized='view',
+        tags=['intermediate']
     )
 }}
 
 /*
-    Intermediate model that normalizes rate schedules into a
-    standard structure for analysis and comparison.
+    Normalized rate schedules with enriched attributes.
 */
 
-with rate_schedules as (
+with rates as (
     select * from {{ ref('stg_rate_schedules') }}
 ),
 
-service_categories as (
-    select * from {{ ref('ref_service_categories') }}
-),
-
 contracts as (
-    select 
+    select
         contract_id,
-        payer_name,
-        provider_name,
         contract_status
-    from {{ ref('stg_contracts') }}
+    from {{ ref('int_contracts_enriched') }}
 ),
 
-normalized as (
+-- Reference data for service categories (use seed if available)
+{% set ref_exists = adapter.get_relation(
+    database=target.database,
+    schema=target.schema,
+    identifier='ref_service_categories'
+) %}
+
+final as (
     select
-        -- Keys
-        rs.rate_schedule_id,
-        rs.contract_id,
-        rs.payer_id,
-        rs.provider_npi,
+        r.rate_schedule_id,
+        r.contract_id,
+        r.payer_id,
+        r.provider_npi,
+        r.rate_line_number,
+        r.service_category,
+        {% if ref_exists %}
+        coalesce(ref.category_name, r.service_category) as service_category_name,
+        {% else %}
+        r.service_category as service_category_name,
+        {% endif %}
+        r.cpt_code,
+        r.description,
+        r.rate_type,
+        r.rate_amount,
         
-        -- Contract context
-        c.payer_name,
-        c.provider_name,
-        c.contract_status,
-        
-        -- Rate details
-        rs.rate_line_number,
-        rs.service_category,
-        sc.category_name as service_category_name,
-        sc.description as service_category_description,
-        rs.cpt_code,
-        rs.rate_type,
-        rs.rate_amount,
-        rs.rate_unit,
-        rs.rate_modifier,
-        
-        -- Dates
-        rs.rate_effective_date,
-        rs.contract_effective_date,
-        rs.contract_termination_date,
-        
-        -- Normalized rate for comparison (convert all to per-unit)
-        case rs.rate_type
-            when 'PER_DIEM' then rs.rate_amount
-            when 'PERCENTAGE' then rs.rate_amount  -- Keep as percentage
-            when 'FLAT_FEE' then rs.rate_amount
-            when 'CASE_RATE' then rs.rate_amount
-            else rs.rate_amount
+        -- Normalized rate (convert percentages to decimals if needed)
+        case 
+            when upper(r.rate_type) = 'PERCENTAGE' and r.rate_amount > 1 then r.rate_amount / 100
+            else r.rate_amount
         end as normalized_rate,
+        
+        r.rate_effective_date,
+        r.rate_unit,
+        r.rate_modifier,
+        r.contract_effective_date,
+        r.contract_termination_date,
         
         -- Rate status
         case 
-            when rs.rate_effective_date > current_date then 'FUTURE'
-            when rs.contract_termination_date < current_date then 'EXPIRED'
+            when r.contract_termination_date is not null and r.contract_termination_date < current_date then 'EXPIRED'
+            when r.rate_effective_date is not null and r.rate_effective_date > current_date then 'FUTURE'
             else 'ACTIVE'
         end as rate_status,
         
-        -- Audit
-        rs._loaded_at
+        c.contract_status,
         
-    from rate_schedules rs
-    left join service_categories sc 
-        on upper(rs.service_category) = upper(sc.category_code)
-    left join contracts c 
-        on rs.contract_id = c.contract_id
+        r._loaded_at
+        
+    from rates r
+    left join contracts c on r.contract_id = c.contract_id
+    {% if ref_exists %}
+    left join {{ ref('ref_service_categories') }} ref on upper(r.service_category) = upper(ref.category_code)
+    {% endif %}
 )
 
-select * from normalized
+select * from final

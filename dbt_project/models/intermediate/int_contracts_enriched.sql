@@ -1,38 +1,31 @@
 {{
     config(
-        materialized='ephemeral',
-        tags=['intermediate', 'contracts']
+        materialized='view',
+        tags=['intermediate']
     )
 }}
 
 /*
-    Intermediate model that enriches contract data with
-    reference data and calculated fields.
+    Enriched contracts with calculated fields and aggregations.
 */
 
 with contracts as (
     select * from {{ ref('stg_contracts') }}
 ),
 
-payers as (
-    select * from {{ ref('ref_payers') }}
-),
-
--- Aggregate rate information per contract
-rate_summary as (
+rate_stats as (
     select
         contract_id,
-        count(*) as total_rate_lines,
-        count(distinct service_category) as unique_service_categories,
-        min(rate_amount) as min_rate,
-        max(rate_amount) as max_rate,
-        avg(rate_amount) as avg_rate
+        count(*) as rate_schedule_count,
+        sum(rate_amount) as total_rate_value,
+        avg(rate_amount) as avg_rate_amount,
+        min(rate_amount) as min_rate_amount,
+        max(rate_amount) as max_rate_amount
     from {{ ref('stg_rate_schedules') }}
     group by contract_id
 ),
 
--- Count amendments per contract
-amendment_summary as (
+amendment_stats as (
     select
         contract_id,
         count(*) as amendment_count,
@@ -41,9 +34,8 @@ amendment_summary as (
     group by contract_id
 ),
 
-enriched as (
+final as (
     select
-        -- Contract core fields
         c.contract_id,
         c.payer_id,
         c.payer_name,
@@ -51,41 +43,41 @@ enriched as (
         c.provider_name,
         c.effective_date,
         c.termination_date,
-        c.contract_duration_days,
-        c.contract_status,
         
-        -- Payer enrichment
-        p.payer_type,
-        p.payer_state,
+        -- Calculated duration
+        datediff(day, c.effective_date, coalesce(c.termination_date, current_date)) as contract_duration_days,
         
-        -- Rate summary
-        coalesce(rs.total_rate_lines, 0) as total_rate_lines,
-        coalesce(rs.unique_service_categories, 0) as unique_service_categories,
-        rs.min_rate,
-        rs.max_rate,
-        rs.avg_rate,
-        
-        -- Amendment summary
-        coalesce(amd.amendment_count, 0) as amendment_count,
-        amd.last_amendment_date,
-        
-        -- Calculated fields
+        -- Contract status
         case 
-            when c.termination_date <= current_date + interval '90 days' 
-                 and c.contract_status = 'ACTIVE'
-            then true 
-            else false 
-        end as expiring_soon,
+            when c.termination_date is not null and c.termination_date < current_date then 'EXPIRED'
+            when c.effective_date is not null and c.effective_date > current_date then 'FUTURE'
+            when c.effective_date is null then 'UNKNOWN'
+            else 'ACTIVE'
+        end as contract_status,
         
-        datediff(day, current_date, c.termination_date) as days_until_expiration,
+        -- Rate statistics
+        coalesce(rs.rate_schedule_count, 0) as rate_schedule_count,
+        rs.total_rate_value,
+        rs.avg_rate_amount,
+        rs.min_rate_amount,
+        rs.max_rate_amount,
+        
+        -- Amendment statistics
+        coalesce(ams.amendment_count, 0) as amendment_count,
+        ams.last_amendment_date,
+        
+        -- Extraction quality
+        c.confidence_score,
+        c.source_file,
+        c.extracted_at,
         
         -- Audit
-        c._loaded_at
+        c.loaded_at,
+        current_timestamp as _enriched_at
         
     from contracts c
-    left join payers p on c.payer_id = p.payer_id
-    left join rate_summary rs on c.contract_id = rs.contract_id
-    left join amendment_summary amd on c.contract_id = amd.contract_id
+    left join rate_stats rs on c.contract_id = rs.contract_id
+    left join amendment_stats ams on c.contract_id = ams.contract_id
 )
 
-select * from enriched
+select * from final

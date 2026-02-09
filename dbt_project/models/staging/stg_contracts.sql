@@ -7,11 +7,11 @@
 
 /*
     Staging model for contract header data.
-    Uses seed data for sample contracts.
+    Uses raw_contracts table loaded from S3.
 */
 
 with source as (
-    select * from {{ ref('contracts') }}
+    select * from {{ source('raw_contracts', 'raw_contracts') }}
 ),
 
 cleaned as (
@@ -25,27 +25,33 @@ cleaned as (
         
         -- Provider information
         trim(provider_npi) as provider_npi,
-        trim(provider_name) as provider_name,
+        trim(replace(provider_name, chr(9), ' ')) as provider_name,
         
-        -- Contract dates
-        cast(effective_date as date) as effective_date,
-        cast(termination_date as date) as termination_date,
-        
-        -- Calculate contract duration
-        datediff(day, 
-            cast(effective_date as date), 
-            cast(termination_date as date)
-        ) as contract_duration_days,
-        
-        -- Contract status
+        -- Contract dates (stored as varchar, convert to date)
         case 
-            when cast(termination_date as date) < current_date then 'EXPIRED'
-            when cast(effective_date as date) > current_date then 'FUTURE'
-            else 'ACTIVE'
-        end as contract_status,
+            when effective_date is not null and effective_date != '' and effective_date != 'null'
+            then cast(effective_date as date)
+            else null
+        end as effective_date,
+        
+        case 
+            when termination_date is not null and termination_date != '' and termination_date != 'null'
+            then cast(termination_date as date)
+            else null
+        end as termination_date,
+        
+        -- Nested data (SUPER type)
+        rate_schedules,
+        amendments,
+        
+        -- Extraction metadata (use SUPER dot notation)
+        extraction_metadata.extracted_at::varchar as extracted_at,
+        extraction_metadata.confidence_score::decimal(5,4) as confidence_score,
+        extraction_metadata.source_file::varchar as source_file,
         
         -- Audit columns
-        current_timestamp as _loaded_at
+        loaded_at,
+        current_timestamp as _dbt_loaded_at
         
     from source
     where contract_id is not null

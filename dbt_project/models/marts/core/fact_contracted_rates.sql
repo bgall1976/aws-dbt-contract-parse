@@ -26,7 +26,7 @@ contracts as (
         contract_id,
         is_current as contract_is_current
     from {{ ref('dim_contract') }}
-    where is_current = true  -- Join to current contract version
+    where is_current = true
 ),
 
 providers as (
@@ -52,10 +52,7 @@ dates as (
 final as (
     select
         -- Surrogate key for fact
-        {{ dbt_utils.generate_surrogate_key([
-            'r.rate_schedule_id',
-            'c.contract_key'
-        ]) }} as rate_key,
+        md5(r.rate_schedule_id || '-' || c.contract_key) as rate_key,
         
         -- Dimension keys
         c.contract_key,

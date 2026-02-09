@@ -7,7 +7,7 @@
 
 /*
     Payer dimension table.
-    Combines extracted payer data with reference data.
+    Built from extracted contract data.
 */
 
 with contracts as (
@@ -18,9 +18,12 @@ with contracts as (
     where payer_id is not null
 ),
 
-reference as (
-    select * from {{ ref('ref_payers') }}
-),
+-- Check if reference seed exists
+{% set ref_exists = adapter.get_relation(
+    database=target.database,
+    schema=target.schema,
+    identifier='ref_payers'
+) %}
 
 -- Aggregate stats per payer
 payer_stats as (
@@ -37,16 +40,22 @@ payer_stats as (
 final as (
     select
         -- Surrogate key
-        {{ dbt_utils.generate_surrogate_key(['coalesce(r.payer_id, c.payer_id)']) }} as payer_key,
+        md5(c.payer_id) as payer_key,
         
         -- Natural key
-        coalesce(r.payer_id, c.payer_id) as payer_id,
+        c.payer_id,
         
-        -- Attributes from reference or extracted
-        coalesce(r.payer_name, c.payer_name) as payer_name,
+        -- Attributes
+        c.payer_name,
+        {% if ref_exists %}
         r.payer_type,
         r.payer_state,
         r.payer_website,
+        {% else %}
+        null::varchar(50) as payer_type,
+        null::varchar(2) as payer_state,
+        null::varchar(255) as payer_website,
+        {% endif %}
         
         -- Derived metrics
         coalesce(ps.total_contracts, 0) as total_contracts,
@@ -56,17 +65,18 @@ final as (
         
         -- Status
         case 
-            when ps.latest_contract_end >= current_date then 'ACTIVE'
-            when ps.payer_id is null then 'REFERENCE_ONLY'
+            when ps.latest_contract_end >= current_date or ps.latest_contract_end is null then 'ACTIVE'
             else 'INACTIVE'
         end as payer_status,
         
         -- Audit
         current_timestamp as _created_at
         
-    from reference r
-    full outer join contracts c on r.payer_id = c.payer_id
-    left join payer_stats ps on coalesce(r.payer_id, c.payer_id) = ps.payer_id
+    from contracts c
+    left join payer_stats ps on c.payer_id = ps.payer_id
+    {% if ref_exists %}
+    left join {{ ref('ref_payers') }} r on c.payer_id = r.payer_id
+    {% endif %}
 )
 
 select * from final

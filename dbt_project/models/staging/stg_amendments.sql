@@ -7,48 +7,51 @@
 
 /*
     Staging model for contract amendments.
-    Uses seed data for sample amendments.
+    Unnests amendments SUPER array from raw_contracts.
 */
 
-with source as (
-    select * from {{ ref('amendments') }}
+with contracts as (
+    select 
+        contract_id,
+        payer_id,
+        provider_npi,
+        effective_date as contract_effective_date,
+        amendments
+    from {{ ref('stg_contracts') }}
+    where amendments is not null
 ),
 
-contracts as (
-    select * from {{ ref('stg_contracts') }}
-),
-
-joined as (
+-- Unnest the SUPER array
+unnested as (
     select
-        s.amendment_id,
-        s.contract_id,
+        c.contract_id,
         c.payer_id,
         c.provider_npi,
-        c.effective_date as contract_effective_date,
-        cast(s.amendment_date as date) as amendment_date,
-        s.description as amendment_description,
-        s.rate_changes,
-        row_number() over (
-            partition by s.contract_id 
-            order by s.amendment_date
-        ) as amendment_sequence
-    from source s
-    left join contracts c on s.contract_id = c.contract_id
+        c.contract_effective_date,
+        a.amendment_id::varchar(100) as amendment_id,
+        a.amendment_date::varchar(50) as amendment_date_raw,
+        a.description::varchar(1000) as amendment_description,
+        a.rate_changes::varchar(2000) as rate_changes
+    from contracts c, c.amendments as a
 ),
 
 cleaned as (
     select
         -- Generate surrogate key
-        {{ dbt_utils.generate_surrogate_key(['contract_id', 'amendment_id']) }} as amendment_key,
+        md5(contract_id || '-' || coalesce(amendment_id, '') || '-' || row_number() over (partition by contract_id order by amendment_date_raw)::varchar) as amendment_key,
         
         contract_id,
         payer_id,
         provider_npi,
         
         -- Amendment details
-        trim(amendment_id) as amendment_id,
-        amendment_sequence,
-        amendment_date as amendment_effective_date,
+        coalesce(trim(amendment_id), 'AMD-' || contract_id || '-' || row_number() over (partition by contract_id order by amendment_date_raw)::varchar) as amendment_id,
+        row_number() over (partition by contract_id order by amendment_date_raw) as amendment_sequence,
+        case 
+            when amendment_date_raw is not null and amendment_date_raw != '' and amendment_date_raw != 'null'
+            then cast(amendment_date_raw as date)
+            else null
+        end as amendment_effective_date,
         trim(amendment_description) as amendment_description,
         'MODIFICATION' as amendment_type,
         trim(rate_changes) as amendment_changes,
@@ -59,8 +62,7 @@ cleaned as (
         -- Audit
         current_timestamp as _loaded_at
         
-    from joined
-    where amendment_id is not null
+    from unnested
 )
 
 select * from cleaned
